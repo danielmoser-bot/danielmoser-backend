@@ -43,7 +43,7 @@ function getQ(email) {
   return emailQuotas.get(k);
 }
 function getSess(id) {
-  if (!sessions.has(id)) sessions.set(id, { count:0, email:null });
+  if (!sessions.has(id)) sessions.set(id, { count:0, email:null, plan:'free' });
   return sessions.get(id);
 }
 function left(q) { return (q.plan==='free') ? Math.max(0,LIMIT-q.count) : 999; }
