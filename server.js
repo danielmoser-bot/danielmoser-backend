@@ -67,7 +67,7 @@ FORMAT:
 [Schweizer Rechtshinweis wenn relevant]
 GESUNDE FÜHRUNG: 4-Ebenen-Modell (Spiess&Stadler), 5-A-Früherkennung, Absenzenmanagement CH.
 PROFIL: Themen:${c.themen||'allg.'} | Branche:${c.branche||'-'} | Team:${c.groesse||'-'} | Rolle:${c.rolle||'-'}
-Max.350 Wörter. Ende bei komplexen Fällen: "→ danielmoser.ch/beratung"`;
+Max.350 Wörter. Ende bei komplexen Fällen: "→ Kontakt: info@danielmoser.ch"`;
 }
 
 // Chat
