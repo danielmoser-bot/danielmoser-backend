@@ -26,6 +26,7 @@ const emailCodes  = new Map();
 const emailQuotas = new Map();
 const sessions    = new Map();
 const LIMIT       = 2;
+const VIP_EMAILS  = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 
 const mailer = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'mail.infomaniak.com',
@@ -35,14 +36,17 @@ const mailer = nodemailer.createTransport({
 
 function getQ(email) {
   const k = email.toLowerCase();
-  if (!emailQuotas.has(k)) emailQuotas.set(k, { count:0, plan:'free', stripeCustomerId:null, stripeSubId:null });
+  if (!emailQuotas.has(k)) {
+    const isVip = VIP_EMAILS.includes(k);
+    emailQuotas.set(k, { count:0, plan: isVip ? 'vip' : 'free', stripeCustomerId:null, stripeSubId:null });
+  }
   return emailQuotas.get(k);
 }
 function getSess(id) {
   if (!sessions.has(id)) sessions.set(id, { count:0, email:null });
   return sessions.get(id);
 }
-function left(q) { return q.plan==='free' ? Math.max(0,LIMIT-q.count) : 999; }
+function left(q) { return (q.plan==='free') ? Math.max(0,LIMIT-q.count) : 999; }
 function checkJWT(req) {
   const a = req.headers.authorization;
   if (!a?.startsWith('Bearer ')) return null;
@@ -200,7 +204,7 @@ app.post('/webhook', (req,res) => {
 });
 
 // Health
-app.get('/health',(_,res)=>res.json({status:'ok',ts:new Date().toISOString(),anthropic:!!process.env.ANTHROPIC_API_KEY,stripe:!!process.env.STRIPE_SECRET_KEY,brevo:!!process.env.BREVO_API_KEY}));
+app.get('/health',(_,res)=>res.json({status:'ok',ts:new Date().toISOString(),anthropic:!!process.env.ANTHROPIC_API_KEY,stripe:!!process.env.STRIPE_SECRET_KEY,brevo:!!process.env.BREVO_API_KEY,vip_count:VIP_EMAILS.length}));
 
 app.listen(PORT,()=>{
   console.log(`\n✓ danielmoser.ch Backend — Port ${PORT}`);
