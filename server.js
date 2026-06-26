@@ -109,20 +109,29 @@ app.get('/api/quota/:sid', (req,res) => {
 app.post('/api/auth/send-code', async (req,res) => {
   const {email} = req.body;
   if (!email||!/.+@.+/.test(email)) return res.status(400).json({error:'Ungültige E-Mail'});
+  const k = email.toLowerCase();
+  
+  // VIP: Sofort verifizieren ohne Code
+  if (VIP_EMAILS.includes(k)) {
+    const q = getQ(k);
+    const token = jwt.sign({email:k,plan:q.plan},JWT_SECRET,{expiresIn:'30d'});
+    return res.json({sent:true, vip:true, verified:true, token, quotaLeft:left(q), plan:q.plan});
+  }
+  
   const code = Math.floor(100000+Math.random()*900000).toString();
-  emailCodes.set(email.toLowerCase(),{code,expires:Date.now()+600000,attempts:0});
+  emailCodes.set(k,{code,expires:Date.now()+600000,attempts:0});
   try {
     await mailer.sendMail({
       from:'"Daniel Moser" <noreply@danielmoser.ch>',to:email,
       subject:`Ihr Code: ${code}`,
       html:`<div style="font-family:system-ui;max-width:480px;margin:0 auto;padding:32px;color:#1A1816">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#2874A6">Daniel Moser · Führungs-Assistent</div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#B8975A">Daniel Moser · KI-Coach</div>
         <h1 style="font-size:24px;font-weight:400;font-family:Georgia,serif;margin:16px 0">Ihr Anmelde-Code</h1>
-        <div style="background:#EBF2F8;border-radius:12px;padding:28px;text-align:center;margin:20px 0">
-          <div style="font-size:42px;font-weight:700;letter-spacing:.3em;color:#1B4F72">${code}</div>
-          <div style="font-size:12px;color:#9A948E;margin-top:8px">Gültig 10 Minuten</div>
+        <div style="background:#F2EAD8;border-radius:12px;padding:28px;text-align:center;margin:20px 0">
+          <div style="font-size:42px;font-weight:700;letter-spacing:.3em;color:#8A6E3A">${code}</div>
+          <div style="font-size:12px;color:#9A8E82;margin-top:8px">Gültig 10 Minuten</div>
         </div>
-        <p style="color:#9A948E;font-size:12px">Falls Sie sich nicht angemeldet haben, ignorieren Sie diese E-Mail.</p>
+        <p style="color:#9A8E82;font-size:12px">Falls Sie sich nicht angemeldet haben, ignorieren Sie diese E-Mail.</p>
       </div>`
     });
   } catch(e) { console.error('Mail:',e.message); }
