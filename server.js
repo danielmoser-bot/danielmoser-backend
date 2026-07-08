@@ -70,9 +70,48 @@ PROFIL: Themen:${c.themen||'allg.'} | Branche:${c.branche||'-'} | Team:${c.groes
 Max.350 Wörter. Ende bei komplexen Fällen: "→ Kontakt: info@danielmoser.ch"`;
 }
 
+function roleplayPrompt(cfg = {}) {
+  const akteure = (Array.isArray(cfg.akteure) ? cfg.akteure : [])
+    .slice(0, 8)
+    .map((a, i) => `${i + 1}. ${a.name || 'Person ' + (i + 1)} — Rolle: ${a.rolle || 'Gesprächspartner'} — Haltung: ${a.haltung || 'neutral'}`)
+    .join('\n');
+  return `Du leitest ein realistisches Führungs-Rollenspiel für den KI-Coach von Daniel Moser (danielmoser.ch).
+
+SZENARIO: ${cfg.szenario || 'Ein schwieriges Führungsgespräch.'}
+DER NUTZER SPIELT: ${cfg.userRolle || 'die Führungskraft'}
+DU SPIELST ALLE FOLGENDEN GESPRÄCHSPARTNER:
+${akteure || '1. Gesprächspartner — Haltung: skeptisch'}
+SCHWIERIGKEIT: ${cfg.schwierigkeit || 'moderat'}
+
+REGELN:
+- Bleib konsequent in den Rollen. Kein Coaching, keine Meta-Kommentare während des Spiels.
+- Jede Wortmeldung beginnt mit **Name (Rolle):** auf eigener Zeile.
+- Pro Antwort sprechen maximal 2-3 Akteure — die anderen schweigen, wie in echten Sitzungen. Wechsle ab, wer zu Wort kommt, passend zur Dynamik. Stille Akteure können über Körpersprache kurz erwähnt werden (max. 1 Satz, kursiv).
+- Bei grösseren Runden (4+): Es entstehen realistische Gruppendynamiken — Allianzen, Unterbrechungen, unausgesprochene Spannungen.
+- Reagiere realistisch auf das, was der Nutzer sagt — inkl. Emotion, Widerstand, Zwischentöne. Schweizer Arbeitskontext (Du/Sie je nach Szenario passend).
+- Die Haltung der Akteure darf sich glaubwürdig entwickeln, wenn der Nutzer gut führt — oder verhärten, wenn nicht.
+- Max. 200 Wörter pro Antwort. Kurze, gesprochene Sätze.
+
+FEEDBACK-MODUS: Wenn der Nutzer das Rollenspiel beendet oder explizit Feedback verlangt, verlasse die Rollen und antworte einmalig als Coach:
+**Wirkung:** [Wie kam der Nutzer rüber — 2-3 Sätze]
+**Stärken:** [2 konkrete Punkte mit Zitat/Moment]
+**Verbesserung:** [2-3 konkrete, umsetzbare Punkte]
+**Passende Frameworks:** [2 Methoden mit je 1 Satz]
+Ende: "→ Für ein Debriefing mit Daniel Moser: info@danielmoser.ch"`;
+}
+
+// Lernfunktion (nur mit ausdrücklichem User-Consent, anonymisiert)
+const fs = require('fs');
+const LEARNING_LOG = process.env.LEARNING_LOG_PATH || './learning-log.jsonl';
+function logLearning(entry) {
+  try {
+    fs.appendFileSync(LEARNING_LOG, JSON.stringify(entry) + '\n');
+  } catch (e) { console.error('Learning-Log:', e.message); }
+}
+
 // Chat
 app.post('/api/chat', async (req,res) => {
-  const { messages, systemPromptContext, sessionId } = req.body;
+  const { messages, systemPromptContext, sessionId, mode, roleplay, consentLearning } = req.body;
   const user = checkJWT(req);
   let quota;
   if (user) {
@@ -84,17 +123,69 @@ app.post('/api/chat', async (req,res) => {
   if (quota.plan==='free' && quota.count>=LIMIT) {
     return res.status(402).json({error:'quota_exceeded',quotaLeft:0,needsAuth:true});
   }
+  const system = (mode === 'roleplay' && roleplay)
+    ? roleplayPrompt(roleplay)
+    : sysPrompt(systemPromptContext || {});
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:sysPrompt(systemPromptContext||{}),messages}),
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system,messages}),
     });
     if (!r.ok) return res.status(502).json({error:'Anthropic-Fehler',detail:await r.json()});
     const data = await r.json();
     quota.count++;
+    // Anonymisiertes Lernen — nur bei ausdrücklichem Opt-in, ohne E-Mail/Session-ID
+    if (consentLearning === true) {
+      const lastUser = [...(messages||[])].reverse().find(m => m.role==='user')?.content || '';
+      const reply = (data.content||[]).find(b => b.type==='text')?.text || '';
+      logLearning({
+        ts: new Date().toISOString(),
+        mode: mode === 'roleplay' ? 'roleplay' : 'coach',
+        kontext: systemPromptContext || null,
+        frage: String(lastUser).slice(0, 2000),
+        antwort: String(reply).slice(0, 3000),
+      });
+    }
     res.json({content:data.content,quotaLeft:left(quota),plan:quota.plan||'free'});
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
+});
+
+// Lern-Log Export (nur für Dani, geschützt via ADMIN_EXPORT_KEY Env-Variable)
+app.get('/api/learning-export', (req,res) => {
+  const key = process.env.ADMIN_EXPORT_KEY;
+  if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
+  try {
+    if (!fs.existsSync(LEARNING_LOG)) return res.status(404).json({error:'Noch keine Einträge'});
+    res.type('text/plain').send(fs.readFileSync(LEARNING_LOG,'utf8'));
+  } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
+});
+
+// Testimonial-Einsendung → E-Mail an Daniel
+app.post('/api/testimonial', async (req,res) => {
+  const { name, firma, text, bewertung, email, website } = req.body;
+  if (website) return res.json({sent:true}); // Honeypot: Bots füllen das versteckte Feld
+  if (!name || !text) return res.status(400).json({error:'Name und Text erforderlich'});
+  if (String(text).length > 2000) return res.status(400).json({error:'Text zu lang (max. 2000 Zeichen)'});
+  try {
+    await mailer.sendMail({
+      from:'"danielmoser.ch" <noreply@danielmoser.ch>',
+      to:'info@danielmoser.ch',
+      replyTo: email || undefined,
+      subject:`Neues Testimonial von ${String(name).slice(0,80)}`,
+      html:`<div style="font-family:system-ui;max-width:560px;margin:0 auto;padding:24px;color:#2A2520">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#B8975A">danielmoser.ch · Testimonial</div>
+        <h2 style="font-family:Georgia,serif;font-weight:400;margin:12px 0">Neue Kundenstimme eingegangen</h2>
+        <p><strong>Name:</strong> ${String(name).slice(0,120)}</p>
+        <p><strong>Firma/Funktion:</strong> ${String(firma||'—').slice(0,160)}</p>
+        <p><strong>Bewertung:</strong> ${'★'.repeat(Math.min(5,Math.max(1,parseInt(bewertung)||5)))}</p>
+        <p><strong>E-Mail:</strong> ${String(email||'—').slice(0,160)}</p>
+        <div style="background:#F7F4EF;border-left:3px solid #B8975A;padding:14px 16px;border-radius:6px;margin-top:12px;white-space:pre-wrap">${String(text).slice(0,2000).replace(/</g,'&lt;')}</div>
+        <p style="color:#9A8E82;font-size:12px;margin-top:16px">Zum Veröffentlichen: Text prüfen und manuell auf der Stimmen-Seite eintragen.</p>
+      </div>`
+    });
+    res.json({sent:true});
+  } catch(e) { console.error('Testimonial-Mail:',e.message); res.status(500).json({error:'Versand fehlgeschlagen'}); }
 });
 
 // Quota
