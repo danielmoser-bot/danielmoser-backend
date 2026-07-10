@@ -162,16 +162,28 @@ app.get('/api/learning-export', (req,res) => {
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
-// Testimonial-Einsendung → als Datei gespeichert (kein SMTP nötig)
+// Testimonial-Einsendung → als Datei gespeichert mit Status "pending"
 const TESTIMONIAL_LOG = process.env.TESTIMONIAL_LOG_PATH || './testimonials.jsonl';
+
+function readTestimonials() {
+  if (!fs.existsSync(TESTIMONIAL_LOG)) return [];
+  return fs.readFileSync(TESTIMONIAL_LOG,'utf8').trim().split('\n').map((l,i) => {
+    try { const o = JSON.parse(l); o._idx = i; return o; } catch(e) { return null; }
+  }).filter(Boolean);
+}
+function writeTestimonials(list) {
+  fs.writeFileSync(TESTIMONIAL_LOG, list.map(t => { const o = {...t}; delete o._idx; return JSON.stringify(o); }).join('\n') + '\n');
+}
+
 app.post('/api/testimonial', (req,res) => {
   const { name, firma, text, bewertung, email, website } = req.body;
-  if (website) return res.json({sent:true}); // Honeypot: Bots füllen das versteckte Feld
+  if (website) return res.json({sent:true});
   if (!name || !text) return res.status(400).json({error:'Name und Text erforderlich'});
   if (String(text).length > 2000) return res.status(400).json({error:'Text zu lang (max. 2000 Zeichen)'});
   try {
     const entry = {
       ts: new Date().toISOString(),
+      status: 'pending',
       name: String(name).slice(0,120),
       firma: String(firma||'').slice(0,160),
       bewertung: Math.min(5, Math.max(1, parseInt(bewertung)||5)),
@@ -183,42 +195,70 @@ app.post('/api/testimonial', (req,res) => {
   } catch(e) { console.error('Testimonial:', e.message); res.status(500).json({error:'Speichern fehlgeschlagen'}); }
 });
 
-// Testimonial-Export als Admin-Seite (gleicher Admin-Key wie Lern-Log)
+// Öffentliche API: nur publizierte Testimonials (für testimonials.html)
+app.get('/api/testimonials', (req,res) => {
+  const all = readTestimonials().filter(t => t.status === 'approved');
+  res.json(all.map(t => ({ name:t.name, firma:t.firma, bewertung:t.bewertung, text:t.text })));
+});
+
+// Admin: Status ändern (approve/reject)
+app.post('/api/testimonials-admin', (req,res) => {
+  const key = process.env.ADMIN_EXPORT_KEY;
+  if (!key || req.body.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
+  const { idx, action } = req.body;
+  if (idx === undefined || !['approve','reject','delete'].includes(action)) return res.status(400).json({error:'idx und action (approve/reject/delete) erforderlich'});
+  try {
+    const list = readTestimonials();
+    const item = list.find(t => t._idx === idx);
+    if (!item) return res.status(404).json({error:'Eintrag nicht gefunden'});
+    if (action === 'delete') { list.splice(list.indexOf(item), 1); }
+    else { item.status = action === 'approve' ? 'approved' : 'rejected'; }
+    writeTestimonials(list);
+    res.json({ok:true, status: action === 'delete' ? 'deleted' : item.status});
+  } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
+});
+
+// Admin-Seite: Übersicht mit Publizieren/Ablehnen-Buttons
 app.get('/api/testimonials-export', (req,res) => {
   const key = process.env.ADMIN_EXPORT_KEY;
   if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
   try {
-    if (!fs.existsSync(TESTIMONIAL_LOG)) return res.send('<h2>Noch keine Einträge</h2>');
-    const lines = fs.readFileSync(TESTIMONIAL_LOG,'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(Boolean);
-    const cards = lines.map((t,i) => {
-      const stars = '★'.repeat(t.bewertung) + '☆'.repeat(5 - t.bewertung);
-      const cardHtml = `<div class="t-card">
-      <div class="t-stars">${stars}</div>
-      <p class="t-text">${t.text.replace(/</g,'&lt;')}</p>
-      <div class="t-name">${(t.name||'').replace(/</g,'&lt;')}</div>
-      <div class="t-role">${(t.firma||'').replace(/</g,'&lt;')}</div>
-    </div>`;
-      return `<div style="background:#fff;border:1px solid #E6DFD4;border-radius:12px;padding:24px;margin-bottom:16px">
+    const list = readTestimonials();
+    const statusLabel = {pending:'⏳ Ausstehend', approved:'✅ Publiziert', rejected:'❌ Abgelehnt'};
+    const statusColor = {pending:'#B8975A', approved:'#1A5C3A', rejected:'#8B1A1A'};
+    const cards = list.map(t => {
+      const stars = '★'.repeat(t.bewertung||5) + '☆'.repeat(5 - (t.bewertung||5));
+      const st = t.status || 'pending';
+      return `<div id="card-${t._idx}" style="background:#fff;border:1px solid #E6DFD4;border-radius:12px;padding:24px;margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <strong style="font-size:16px">${(t.name||'—').replace(/</g,'&lt;')}</strong>
-          <span style="color:#8C8378;font-size:13px">${t.ts ? new Date(t.ts).toLocaleDateString('de-CH') : '—'}</span>
+          <div><span style="background:${statusColor[st]||'#888'};color:#fff;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600">${statusLabel[st]||st}</span>
+          <span style="color:#8C8378;font-size:13px;margin-left:8px">${t.ts ? new Date(t.ts).toLocaleDateString('de-CH') : '—'}</span></div>
         </div>
         <div style="color:#B8975A;font-size:16px;letter-spacing:2px;margin-bottom:8px">${stars}</div>
-        <div style="color:#8C8378;font-size:13px;margin-bottom:8px">${(t.firma||'—').replace(/</g,'&lt;')} · ${(t.email||'keine E-Mail').replace(/</g,'&lt;')}</div>
-        <div style="background:#F7F4EF;border-left:3px solid #B8975A;padding:14px;border-radius:6px;white-space:pre-wrap;font-size:14px;line-height:1.6;margin-bottom:14px">${t.text.replace(/</g,'&lt;')}</div>
-        <details style="margin-top:8px"><summary style="cursor:pointer;color:#B8975A;font-size:13px;font-weight:600">📋 HTML-Code zum Einfügen in testimonials.html</summary>
-        <textarea readonly onclick="this.select()" style="width:100%;height:120px;margin-top:8px;font-family:monospace;font-size:12px;padding:10px;border:1px solid #E6DFD4;border-radius:8px;background:#FAFAF8">${cardHtml.replace(/</g,'&lt;')}</textarea>
-        </details>
+        <div style="color:#8C8378;font-size:13px;margin-bottom:8px">${(t.firma||'—').replace(/</g,'&lt;')} · ${(t.email||'—').replace(/</g,'&lt;')}</div>
+        <div style="background:#F7F4EF;border-left:3px solid #B8975A;padding:14px;border-radius:6px;white-space:pre-wrap;font-size:14px;line-height:1.6;margin-bottom:14px">${(t.text||'').replace(/</g,'&lt;')}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${st!=='approved'?`<button onclick="doAction(${t._idx},'approve')" style="padding:8px 18px;background:#1A5C3A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✅ Publizieren</button>`:''}
+          ${st!=='rejected'?`<button onclick="doAction(${t._idx},'reject')" style="padding:8px 18px;background:#8B1A1A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">❌ Ablehnen</button>`:''}
+          <button onclick="if(confirm('Wirklich löschen?'))doAction(${t._idx},'delete')" style="padding:8px 18px;background:#E6DFD4;color:#2A2520;border:none;border-radius:8px;font-size:13px;cursor:pointer">🗑 Löschen</button>
+        </div>
       </div>`;
     }).join('');
     res.send(`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Testimonials Admin</title>
-      <style>body{font-family:system-ui,sans-serif;background:#F7F4EF;color:#2A2520;margin:0;padding:24px}
-      .wrap{max-width:700px;margin:0 auto}</style></head><body><div class="wrap">
-      <h1 style="font-size:24px;font-weight:500">Eingegangene Kundenstimmen (${lines.length})</h1>
-      <p style="color:#8C8378;margin-bottom:24px">Klicke auf «HTML-Code» um den Karten-Code zu kopieren und in testimonials.html einzufügen.</p>
+      <style>body{font-family:system-ui,sans-serif;background:#F7F4EF;color:#2A2520;margin:0;padding:24px}.wrap{max-width:700px;margin:0 auto}</style></head><body><div class="wrap">
+      <h1 style="font-size:24px;font-weight:500">Kundenstimmen verwalten (${list.length})</h1>
+      <p style="color:#8C8378;margin-bottom:24px">Klicke auf «Publizieren» → die Stimme erscheint automatisch auf der Webseite. «Ablehnen» → bleibt unsichtbar.</p>
       ${cards || '<p>Noch keine Einträge.</p>'}
-      </div></body></html>`);
+      </div><script>
+      const KEY='${key}';
+      async function doAction(idx,action){
+        const r=await fetch('/api/testimonials-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:KEY,idx,action})});
+        const d=await r.json();
+        if(d.ok) location.reload(); else alert('Fehler: '+(d.error||'unbekannt'));
+      }
+      </script></body></html>`);
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
