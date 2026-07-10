@@ -75,7 +75,7 @@ function roleplayPrompt(cfg = {}) {
     .slice(0, 8)
     .map((a, i) => `${i + 1}. ${a.name || 'Person ' + (i + 1)} — Rolle: ${a.rolle || 'Gesprächspartner'} — Haltung: ${a.haltung || 'neutral'}`)
     .join('\n');
-  return `Du leitest ein realistisches Führungs-Rollenspiel für den KI-Coach von Daniel Moser (danielmoser.ch).
+  return `Du leitest eine realistische Führungs-Gesprächssimulation für den KI-Coach von Daniel Moser (danielmoser.ch).
 
 SZENARIO: ${cfg.szenario || 'Ein schwieriges Führungsgespräch.'}
 DER NUTZER SPIELT: ${cfg.userRolle || 'die Führungskraft'}
@@ -92,7 +92,7 @@ REGELN:
 - Die Haltung der Akteure darf sich glaubwürdig entwickeln, wenn der Nutzer gut führt — oder verhärten, wenn nicht.
 - Max. 200 Wörter pro Antwort. Kurze, gesprochene Sätze.
 
-FEEDBACK-MODUS: Wenn der Nutzer das Rollenspiel beendet oder explizit Feedback verlangt, verlasse die Rollen und antworte einmalig als Coach:
+FEEDBACK-MODUS: Wenn der Nutzer die Simulation beendet oder explizit Feedback verlangt, verlasse die Rollen und antworte einmalig als Coach:
 **Wirkung:** [Wie kam der Nutzer rüber — 2-3 Sätze]
 **Stärken:** [2 konkrete Punkte mit Zitat/Moment]
 **Verbesserung:** [2-3 konkrete, umsetzbare Punkte]
