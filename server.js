@@ -162,31 +162,35 @@ app.get('/api/learning-export', (req,res) => {
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
-// Testimonial-Einsendung → E-Mail an Daniel
-app.post('/api/testimonial', async (req,res) => {
+// Testimonial-Einsendung → als Datei gespeichert (kein SMTP nötig)
+const TESTIMONIAL_LOG = process.env.TESTIMONIAL_LOG_PATH || './testimonials.jsonl';
+app.post('/api/testimonial', (req,res) => {
   const { name, firma, text, bewertung, email, website } = req.body;
   if (website) return res.json({sent:true}); // Honeypot: Bots füllen das versteckte Feld
   if (!name || !text) return res.status(400).json({error:'Name und Text erforderlich'});
   if (String(text).length > 2000) return res.status(400).json({error:'Text zu lang (max. 2000 Zeichen)'});
   try {
-    await mailer.sendMail({
-      from:'"danielmoser.ch" <info@danielmoser.ch>',
-      to:'info@danielmoser.ch',
-      replyTo: email || undefined,
-      subject:`Neues Testimonial von ${String(name).slice(0,80)}`,
-      html:`<div style="font-family:system-ui;max-width:560px;margin:0 auto;padding:24px;color:#2A2520">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#B8975A">danielmoser.ch · Testimonial</div>
-        <h2 style="font-family:Georgia,serif;font-weight:400;margin:12px 0">Neue Kundenstimme eingegangen</h2>
-        <p><strong>Name:</strong> ${String(name).slice(0,120)}</p>
-        <p><strong>Firma/Funktion:</strong> ${String(firma||'—').slice(0,160)}</p>
-        <p><strong>Bewertung:</strong> ${'★'.repeat(Math.min(5,Math.max(1,parseInt(bewertung)||5)))}</p>
-        <p><strong>E-Mail:</strong> ${String(email||'—').slice(0,160)}</p>
-        <div style="background:#F7F4EF;border-left:3px solid #B8975A;padding:14px 16px;border-radius:6px;margin-top:12px;white-space:pre-wrap">${String(text).slice(0,2000).replace(/</g,'&lt;')}</div>
-        <p style="color:#9A8E82;font-size:12px;margin-top:16px">Zum Veröffentlichen: Text prüfen und manuell auf der Stimmen-Seite eintragen.</p>
-      </div>`
-    });
+    const entry = {
+      ts: new Date().toISOString(),
+      name: String(name).slice(0,120),
+      firma: String(firma||'').slice(0,160),
+      bewertung: Math.min(5, Math.max(1, parseInt(bewertung)||5)),
+      email: String(email||'').slice(0,160),
+      text: String(text).slice(0,2000),
+    };
+    fs.appendFileSync(TESTIMONIAL_LOG, JSON.stringify(entry) + '\n');
     res.json({sent:true});
-  } catch(e) { console.error('Testimonial-Mail:',e.message); res.status(500).json({error:'Versand fehlgeschlagen'}); }
+  } catch(e) { console.error('Testimonial:', e.message); res.status(500).json({error:'Speichern fehlgeschlagen'}); }
+});
+
+// Testimonial-Export (gleicher Admin-Key wie Lern-Log)
+app.get('/api/testimonials-export', (req,res) => {
+  const key = process.env.ADMIN_EXPORT_KEY;
+  if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
+  try {
+    if (!fs.existsSync(TESTIMONIAL_LOG)) return res.status(404).json({error:'Noch keine Einträge'});
+    res.type('text/plain').send(fs.readFileSync(TESTIMONIAL_LOG,'utf8'));
+  } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
 // Quota
