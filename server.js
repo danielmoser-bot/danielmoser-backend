@@ -29,9 +29,10 @@ const LIMIT       = 2;
 const VIP_EMAILS  = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 
 const mailer = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'mail.infomaniak.com',
+  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
   port: 587, secure: false,
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  tls: { rejectUnauthorized: false },
 });
 
 function getQ(email) {
@@ -169,7 +170,7 @@ app.post('/api/testimonial', async (req,res) => {
   if (String(text).length > 2000) return res.status(400).json({error:'Text zu lang (max. 2000 Zeichen)'});
   try {
     await mailer.sendMail({
-      from:'"danielmoser.ch" <noreply@danielmoser.ch>',
+      from:'"danielmoser.ch" <info@danielmoser.ch>',
       to:'info@danielmoser.ch',
       replyTo: email || undefined,
       subject:`Neues Testimonial von ${String(name).slice(0,80)}`,
@@ -213,7 +214,7 @@ app.post('/api/auth/send-code', async (req,res) => {
   emailCodes.set(k,{code,expires:Date.now()+600000,attempts:0});
   try {
     await mailer.sendMail({
-      from:'"Daniel Moser" <noreply@danielmoser.ch>',to:email,
+      from:'"Daniel Moser" <info@danielmoser.ch>',to:email,
       subject:`Ihr Code: ${code}`,
       html:`<div style="font-family:system-ui;max-width:480px;margin:0 auto;padding:32px;color:#1A1816">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#B8975A">Daniel Moser · KI-Coach</div>
