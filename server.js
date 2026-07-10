@@ -183,13 +183,42 @@ app.post('/api/testimonial', (req,res) => {
   } catch(e) { console.error('Testimonial:', e.message); res.status(500).json({error:'Speichern fehlgeschlagen'}); }
 });
 
-// Testimonial-Export (gleicher Admin-Key wie Lern-Log)
+// Testimonial-Export als Admin-Seite (gleicher Admin-Key wie Lern-Log)
 app.get('/api/testimonials-export', (req,res) => {
   const key = process.env.ADMIN_EXPORT_KEY;
   if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
   try {
-    if (!fs.existsSync(TESTIMONIAL_LOG)) return res.status(404).json({error:'Noch keine Einträge'});
-    res.type('text/plain').send(fs.readFileSync(TESTIMONIAL_LOG,'utf8'));
+    if (!fs.existsSync(TESTIMONIAL_LOG)) return res.send('<h2>Noch keine Einträge</h2>');
+    const lines = fs.readFileSync(TESTIMONIAL_LOG,'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(Boolean);
+    const cards = lines.map((t,i) => {
+      const stars = '★'.repeat(t.bewertung) + '☆'.repeat(5 - t.bewertung);
+      const cardHtml = `<div class="t-card">
+      <div class="t-stars">${stars}</div>
+      <p class="t-text">${t.text.replace(/</g,'&lt;')}</p>
+      <div class="t-name">${(t.name||'').replace(/</g,'&lt;')}</div>
+      <div class="t-role">${(t.firma||'').replace(/</g,'&lt;')}</div>
+    </div>`;
+      return `<div style="background:#fff;border:1px solid #E6DFD4;border-radius:12px;padding:24px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <strong style="font-size:16px">${(t.name||'—').replace(/</g,'&lt;')}</strong>
+          <span style="color:#8C8378;font-size:13px">${t.ts ? new Date(t.ts).toLocaleDateString('de-CH') : '—'}</span>
+        </div>
+        <div style="color:#B8975A;font-size:16px;letter-spacing:2px;margin-bottom:8px">${stars}</div>
+        <div style="color:#8C8378;font-size:13px;margin-bottom:8px">${(t.firma||'—').replace(/</g,'&lt;')} · ${(t.email||'keine E-Mail').replace(/</g,'&lt;')}</div>
+        <div style="background:#F7F4EF;border-left:3px solid #B8975A;padding:14px;border-radius:6px;white-space:pre-wrap;font-size:14px;line-height:1.6;margin-bottom:14px">${t.text.replace(/</g,'&lt;')}</div>
+        <details style="margin-top:8px"><summary style="cursor:pointer;color:#B8975A;font-size:13px;font-weight:600">📋 HTML-Code zum Einfügen in testimonials.html</summary>
+        <textarea readonly onclick="this.select()" style="width:100%;height:120px;margin-top:8px;font-family:monospace;font-size:12px;padding:10px;border:1px solid #E6DFD4;border-radius:8px;background:#FAFAF8">${cardHtml.replace(/</g,'&lt;')}</textarea>
+        </details>
+      </div>`;
+    }).join('');
+    res.send(`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Testimonials Admin</title>
+      <style>body{font-family:system-ui,sans-serif;background:#F7F4EF;color:#2A2520;margin:0;padding:24px}
+      .wrap{max-width:700px;margin:0 auto}</style></head><body><div class="wrap">
+      <h1 style="font-size:24px;font-weight:500">Eingegangene Kundenstimmen (${lines.length})</h1>
+      <p style="color:#8C8378;margin-bottom:24px">Klicke auf «HTML-Code» um den Karten-Code zu kopieren und in testimonials.html einzufügen.</p>
+      ${cards || '<p>Noch keine Einträge.</p>'}
+      </div></body></html>`);
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
