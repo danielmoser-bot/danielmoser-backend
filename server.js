@@ -382,6 +382,66 @@ app.post('/webhook', (req,res) => {
   res.json({received:true});
 });
 
+// Admin: Nutzungsübersicht — Sessions, Quota-Ausschöpfung, Pläne
+// Achtung: Daten liegen nur im Arbeitsspeicher (kein Redis), gehen bei jedem Railway-Neustart verloren.
+app.get('/api/usage-stats', (req,res) => {
+  const key = process.env.ADMIN_EXPORT_KEY;
+  if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
+
+  // Anonyme Sessions (localStorage-basiert, kein Login)
+  const sessList = Array.from(sessions.entries()).map(([id,s]) => ({id, count:s.count, email:s.email, plan:s.plan}));
+  const sessAtLimit = sessList.filter(s => s.count >= LIMIT).length;
+  const sessTotal = sessList.length;
+  const sessAvgCount = sessTotal ? (sessList.reduce((a,s)=>a+s.count,0)/sessTotal).toFixed(1) : 0;
+
+  // Registrierte E-Mails (nach Verifizierung/Login)
+  const emailList = Array.from(emailQuotas.entries()).map(([email,q]) => ({email, count:q.count, plan:q.plan}));
+  const planCounts = emailList.reduce((acc,e) => { acc[e.plan] = (acc[e.plan]||0)+1; return acc; }, {});
+
+  const sessRows = sessList
+    .sort((a,b) => b.count - a.count)
+    .map(s => `<tr><td>${s.id.slice(0,18)}…</td><td style="text-align:center">${s.count}</td><td>${s.count>=LIMIT?'🔴 Grenze erreicht':'—'}</td></tr>`)
+    .join('');
+  const emailRows = emailList
+    .sort((a,b) => b.count - a.count)
+    .map(e => `<tr><td>${e.email}</td><td style="text-align:center">${e.count}</td><td style="text-align:center">${e.plan}</td></tr>`)
+    .join('');
+
+  res.send(`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Nutzungsübersicht</title>
+    <style>body{font-family:system-ui,sans-serif;background:#F7F4EF;color:#2A2520;margin:0;padding:24px}
+    .wrap{max-width:800px;margin:0 auto}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+    .card{background:#fff;border:1px solid #E6DFD4;border-radius:12px;padding:18px}
+    .card .num{font-size:28px;font-weight:700;color:#B8975A}
+    .card .lbl{font-size:12px;color:#8C8378;margin-top:4px}
+    table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;margin-bottom:28px}
+    th,td{padding:8px 12px;border-bottom:1px solid #E6DFD4;font-size:13px;text-align:left}
+    th{background:#F2EAD8;font-weight:600}
+    .warn{background:#FDE8E8;border:1px solid #F5C0C0;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#8B1A1A;margin-bottom:20px}</style>
+    </head><body><div class="wrap">
+    <h1 style="font-size:24px;font-weight:500">Bot-Nutzungsübersicht</h1>
+    <div class="warn">⚠️ Diese Daten liegen nur im Arbeitsspeicher — sie gehen bei jedem Deploy/Neustart auf Railway verloren. Für dauerhafte Statistiken bräuchte es eine echte Datenbank.</div>
+    <div class="cards">
+      <div class="card"><div class="num">${sessTotal}</div><div class="lbl">Anonyme Sessions insgesamt</div></div>
+      <div class="card"><div class="num">${sessAtLimit}</div><div class="lbl">Gratis-Grenze erreicht (${LIMIT} Anfragen)</div></div>
+      <div class="card"><div class="num">${sessAvgCount}</div><div class="lbl">⌀ Anfragen pro Session</div></div>
+      <div class="card"><div class="num">${emailList.length}</div><div class="lbl">Registrierte E-Mails</div></div>
+      <div class="card"><div class="num">${planCounts.free||0}</div><div class="lbl">davon Gratis-Plan</div></div>
+      <div class="card"><div class="num">${(planCounts.basis||0)+(planCounts.pro||0)+(planCounts.team||0)}</div><div class="lbl">davon zahlende Abos</div></div>
+      <div class="card"><div class="num">${planCounts.vip||0}</div><div class="lbl">davon VIP</div></div>
+    </div>
+
+    <h2 style="font-size:17px;font-weight:600">Registrierte Nutzer (nach E-Mail)</h2>
+    <table><tr><th>E-Mail</th><th style="text-align:center">Anfragen</th><th style="text-align:center">Plan</th></tr>
+    ${emailRows || '<tr><td colspan="3">Noch keine registrierten Nutzer</td></tr>'}</table>
+
+    <h2 style="font-size:17px;font-weight:600">Anonyme Sessions (ohne Login, Top nach Anfragen)</h2>
+    <table><tr><th>Session-ID</th><th style="text-align:center">Anfragen</th><th>Status</th></tr>
+    ${sessRows || '<tr><td colspan="3">Noch keine Sessions</td></tr>'}</table>
+    </div></body></html>`);
+});
+
 // Health
 app.get('/health',(_,res)=>res.json({status:'ok',ts:new Date().toISOString(),anthropic:!!process.env.ANTHROPIC_API_KEY,stripe:!!process.env.STRIPE_SECRET_KEY,brevo:!!process.env.BREVO_API_KEY,vip_count:VIP_EMAILS.length}));
 
