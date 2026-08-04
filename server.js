@@ -442,6 +442,62 @@ app.get('/api/usage-stats', (req,res) => {
     </div></body></html>`);
 });
 
+// ── Site-Chat-Widget: Navigationshilfe, unabhängig vom KI-Coach-Kontingent ────
+const siteChatSessions = new Map(); // sessionId -> {count, lastReset}
+const SITE_CHAT_LIMIT_PER_HOUR = 15; // grosszügig, aber schützt vor Missbrauch/Kostenexplosion
+
+function siteChatSysPrompt() {
+  return `Du bist der Website-Assistent von danielmoser.ch — NICHT der KI-Coach. Deine einzige Aufgabe: Besucherinnen und Besuchern helfen, sich auf der Website zurechtzufinden und das passende Angebot zu finden. Du gibst KEINE Führungsberatung, KEINE inhaltlichen Coaching-Antworten — dafür gibt es den KI-Coach.
+
+ANGEBOTE VON DANIEL MOSER (nutze diese Infos für Empfehlungen):
+- Kostenloses Erstgespräch (unverbindlich) → /kostenloses-erstgespraech
+- KI-Coach: sofortige Analyse von Führungssituationen, 2 Analysen gratis, rund um die Uhr → /coach
+- Gesprächssimulation: schwierige Gespräche vorher üben, bis zu 8 Gesprächspartner, kostenlos → /gespraechssimulation
+- Einzelcoaching: ab CHF 200.– → /dienstleistungen
+- Fokus-Session (60/90 Min.): CHF 350.–/600.– → /dienstleistungen
+- Führungslotse Akut: CHF 890.– → /dienstleistungen
+- Stakeholder-Simulation (Premium, mit persönlichem Debriefing): CHF 1'100.– → /dienstleistungen
+- Newsletter (6 kostenlose Impulse über 30 Tage) → Anmeldung auf der Startseite
+- Blog mit Führungsartikeln → /blog
+
+REGELN:
+- Antworte kurz (max. 3-4 Sätze), freundlich, auf Deutsch (Sie-Form)
+- Verweise bei jeder Antwort auf die passende Seite mit einem klaren Link-Hinweis, z.B. "Das finden Sie unter [Gesprächssimulation](/gespraechssimulation)"
+- Bei inhaltlichen Führungsfragen ("Wie führe ich ein Kündigungsgespräch?"): NICHT selbst beraten, sondern auf den KI-Coach oder die Gesprächssimulation verweisen
+- Bei Preisfragen: die Zahlen aus der Liste oben nennen
+- Bei Fragen ausserhalb des Themas (z.B. Wetter, allgemeines Wissen): freundlich zurücklenken auf die Website-Themen
+- Nie medizinische, rechtliche oder psychologische Diagnosen stellen`;
+}
+
+app.post('/api/site-chat', async (req,res) => {
+  const { message, sessionId } = req.body;
+  if (!message || !sessionId) return res.status(400).json({error:'message und sessionId erforderlich'});
+  if (String(message).length > 500) return res.status(400).json({error:'Nachricht zu lang (max. 500 Zeichen)'});
+
+  const now = Date.now();
+  let s = siteChatSessions.get(sessionId);
+  if (!s || now - s.lastReset > 3600000) { s = {count:0, lastReset:now}; siteChatSessions.set(sessionId, s); }
+  if (s.count >= SITE_CHAT_LIMIT_PER_HOUR) return res.status(429).json({error:'Zu viele Anfragen. Bitte in einer Stunde wieder versuchen, oder direkt info@danielmoser.ch kontaktieren.'});
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':process.env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:300,
+        system:siteChatSysPrompt(),
+        messages:[{role:'user', content:String(message).slice(0,500)}],
+      }),
+    });
+    if (!r.ok) return res.status(502).json({error:'Anthropic-Fehler'});
+    const data = await r.json();
+    s.count++;
+    const reply = (data.content||[]).find(b => b.type==='text')?.text || 'Entschuldigung, das habe ich nicht verstanden.';
+    res.json({reply});
+  } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
+});
+
 // Health
 app.get('/health',(_,res)=>res.json({status:'ok',ts:new Date().toISOString(),anthropic:!!process.env.ANTHROPIC_API_KEY,stripe:!!process.env.STRIPE_SECRET_KEY,brevo:!!process.env.BREVO_API_KEY,vip_count:VIP_EMAILS.length}));
 
