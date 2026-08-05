@@ -469,6 +469,14 @@ REGELN:
 - Nie medizinische, rechtliche oder psychologische Diagnosen stellen`;
 }
 
+// ── Site-Chat: Log der freien Fragen (nur Freitext, nicht die Quick-Buttons) ──
+const SITE_CHAT_LOG = process.env.SITE_CHAT_LOG_PATH || './site-chat-log.jsonl';
+function logSiteChatQuestion(question, reply) {
+  try {
+    fs.appendFileSync(SITE_CHAT_LOG, JSON.stringify({ ts: new Date().toISOString(), question, reply }) + '\n');
+  } catch (e) { console.error('Site-Chat-Log:', e.message); }
+}
+
 app.post('/api/site-chat', async (req,res) => {
   const { message, sessionId } = req.body;
   if (!message || !sessionId) return res.status(400).json({error:'message und sessionId erforderlich'});
@@ -494,7 +502,30 @@ app.post('/api/site-chat', async (req,res) => {
     const data = await r.json();
     s.count++;
     const reply = (data.content||[]).find(b => b.type==='text')?.text || 'Entschuldigung, das habe ich nicht verstanden.';
+    logSiteChatQuestion(String(message).slice(0,500), reply.slice(0,500));
     res.json({reply});
+  } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
+});
+
+// Admin: Übersicht aller freien Chat-Fragen — gleicher Key wie Testimonials/Nutzungsübersicht
+app.get('/api/site-chat-log', (req,res) => {
+  const key = process.env.ADMIN_EXPORT_KEY;
+  if (!key || req.query.key !== key) return res.status(403).json({error:'Nicht autorisiert'});
+  try {
+    if (!fs.existsSync(SITE_CHAT_LOG)) return res.send('<h2>Noch keine freien Fragen gestellt</h2>');
+    const lines = fs.readFileSync(SITE_CHAT_LOG,'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(Boolean).reverse();
+    const rows = lines.map(l => `<div style="background:#fff;border:1px solid #E6DFD4;border-radius:12px;padding:18px 20px;margin-bottom:14px">
+      <div style="color:#8C8378;font-size:12px;margin-bottom:8px">${new Date(l.ts).toLocaleString('de-CH')}</div>
+      <div style="font-weight:600;color:#2A2520;margin-bottom:6px">❓ ${l.question.replace(/</g,'&lt;')}</div>
+      <div style="color:#5A524A;font-size:13.5px;background:#FDF8F0;border-left:3px solid #B8975A;padding:10px 14px;border-radius:6px">${l.reply.replace(/</g,'&lt;')}</div>
+    </div>`).join('');
+    res.send(`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Chat-Fragen Übersicht</title>
+      <style>body{font-family:system-ui,sans-serif;background:#F7F4EF;color:#2A2520;margin:0;padding:24px}.wrap{max-width:720px;margin:0 auto}</style></head><body><div class="wrap">
+      <h1 style="font-size:24px;font-weight:500">Freie Chat-Fragen (${lines.length})</h1>
+      <p style="color:#8C8378;margin-bottom:24px">Nur Freitext-Fragen, die nicht über die 4 Quick-Buttons gestellt wurden. Neueste zuerst.</p>
+      ${rows}
+      </div></body></html>`);
   } catch(e) { res.status(500).json({error:'Interner Fehler'}); }
 });
 
