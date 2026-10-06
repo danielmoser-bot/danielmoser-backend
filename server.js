@@ -317,12 +317,29 @@ app.post('/api/auth/send-code', async (req,res) => {
       </div>`
     });
   } catch(e) { console.error('Mail:',e.message); }
-  console.log(`[AUTH] ${email} → ${code}`);
+  console.log(`[AUTH] Code gesendet an ${email}`);
   res.json({sent:true});
 });
 
 // Auth: Code prüfen
-app.post('/api/auth/verify-code', (req,res) => {
+// Aktives Abo direkt bei Stripe nachschlagen (übersteht Neustarts)
+async function planFromStripe(email) {
+  try {
+    const custs = await stripe.customers.list({email, limit:10});
+    for (const c of custs.data) {
+      const subs = await stripe.subscriptions.list({customer:c.id, status:'all', limit:10});
+      for (const sub of subs.data) {
+        if (!['active','trialing','past_due'].includes(sub.status)) continue;
+        const priceId = sub.items.data[0]?.price?.id;
+        const plan = Object.keys(PLANS).find(p => PLANS[p].priceId && PLANS[p].priceId===priceId);
+        if (plan) return {plan, customer:c.id, sub:sub.id};
+      }
+    }
+  } catch(e) { console.error('Stripe-Lookup:', e.message); }
+  return null;
+}
+
+app.post('/api/auth/verify-code', async (req,res) => {
   const {email,code} = req.body;
   if (!email||!code) return res.status(400).json({error:'Fehlende Felder'});
   const k = email.toLowerCase();
@@ -330,9 +347,13 @@ app.post('/api/auth/verify-code', (req,res) => {
   if (!s) return res.status(400).json({verified:false,error:'Kein Code'});
   if (Date.now()>s.expires) { emailCodes.delete(k); return res.status(400).json({verified:false,error:'Abgelaufen'}); }
   if (++s.attempts>5) { emailCodes.delete(k); return res.status(429).json({verified:false,error:'Zu viele Versuche'}); }
-  if (s.code!==code) return res.status(400).json({verified:false,error:'Falscher Code'});
+  if (String(s.code)!==String(code).trim()) return res.status(400).json({verified:false,error:'Falscher Code'});
   emailCodes.delete(k);
   const q = getQ(k);
+  if (q.plan==='free') {
+    const found = await planFromStripe(k);
+    if (found) { q.plan=found.plan; q.stripeCustomerId=found.customer; q.stripeSubId=found.sub; console.log(`✓ Abo über Stripe erkannt: ${k} → ${found.plan}`); }
+  }
   const token = jwt.sign({email:k,plan:q.plan},JWT_SECRET,{expiresIn:'30d'});
   res.json({verified:true,token,quotaLeft:left(q),plan:q.plan});
 });
