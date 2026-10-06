@@ -28,12 +28,24 @@ const sessions    = new Map();
 const LIMIT       = 2;
 const VIP_EMAILS  = (process.env.VIP_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 
-const mailer = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
-  port: 587, secure: false,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  tls: { rejectUnauthorized: false },
-});
+// Mailversand über Brevo-API (HTTPS) – SMTP-Ports sind auf Railway (Hobby) gesperrt
+const mailer = {
+  async sendMail({from, to, subject, html}) {
+    const m = String(from).match(/^"?([^"<]*)"?\s*<([^>]+)>$/);
+    const sender = m ? {name: m[1].trim(), email: m[2]} : {email: String(from)};
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','api-key':process.env.BREVO_API_KEY},
+        body: JSON.stringify({sender, to:[{email:to}], subject, htmlContent: html}),
+        signal: ctrl.signal,
+      });
+      if (!r.ok) throw new Error('Brevo ' + r.status + ' ' + (await r.text()).slice(0,200));
+    } finally { clearTimeout(t); }
+  }
+};
 
 function getQ(email) {
   const k = email.toLowerCase();
